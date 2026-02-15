@@ -1,0 +1,86 @@
+pipeline {
+    agent any
+    tools {
+        maven 'mvn3'
+        jdk 'jdk17'
+    }
+    environment {
+        SCANNER_HOME = tool 'sonar'
+    } 
+
+    stages {
+        stage('Git checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/Cloud-Lucky/Ekart.git'
+            }
+        }
+        
+        stage('compile') {
+            steps {
+                sh 'mvn compile'
+            }
+        }
+
+        stage('Unit test') {
+            steps {
+                sh 'mvn test -DskipTests=true'
+            }
+        }
+
+        stage('SonarQube analysis') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    sh '${SCANNER_HOME}/bin/sonar-scanner -Dsonar.projectKey=Ekart -Dsonar.sources=src -Dsonar.java.binaries=.'
+                }
+            }
+        }
+
+        stage('Trivy-fs') {
+            steps {
+                sh'trivy fs --format table -o fs-report.html .'
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'mvn package -DskipTests=true'
+            }
+        }
+
+        stage('Deploy to Nexus') {
+            steps {
+                withMaven(globalMavenSettingsConfig: '716f81ba-71a4-4902-b36d-101c01172d50', jdk: 'jdk17', maven: 'mvn3', traceability: true) {
+                    sh 'mvn deploy -DskipTests=true'
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'Docker_Cred', passwordVariable: 'DockerHubPass', usernameVariable: 'DockerHubUser')]) {
+                    sh'''
+                    echo "$DockerHubPass" | docker login -u "$DockerHubUser" --password-stdin
+                    docker build -t laxmireddy870113/ekart:latest -f docker/Dockerfile .
+                    docker push laxmireddy870113/ekart:latest
+                    '''
+                }
+            }
+        }
+
+        stage('Trivy scan') {
+            steps {
+                sh'trivy image --format table -o fs-report.txt laxmireddy870113/ekart:latest'
+            }
+        }
+
+        stage('Docker-run') {
+            steps {
+                sh 'docker run -d -p 8070:8070 --name ekart laxmireddy870113/ekart:latest'
+            }
+        }
+
+        
+    }
+
+}
+
